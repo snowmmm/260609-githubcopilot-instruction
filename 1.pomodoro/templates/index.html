@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🍅 ポモドーロタイマー</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    /* ===== Reset & base ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red:    #e74c3c;
+      --green:  #27ae60;
+      --blue:   #2980b9;
+      --gold:   #f39c12;
+      --bg:     #1a1a2e;
+      --card:   #16213e;
+      --card2:  #0f3460;
+      --text:   #eaeaea;
+      --muted:  #aaa;
+      --radius: 16px;
+    }
+
+    body {
+      font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+    }
+
+    h1 { font-size: 1.8rem; text-align: center; margin-bottom: 8px; }
+    h2 { font-size: 1.1rem; color: var(--gold); margin-bottom: 12px; }
+    .muted { color: var(--muted); font-size: .85rem; }
+
+    /* ===== Layout ===== */
+    .container { max-width: 900px; margin: 0 auto; }
+
+    .ab-banner {
+      text-align: center;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: .8rem;
+      margin-bottom: 16px;
+    }
+    .ab-banner.on  { background: #1a472a; color: #a3e4b0; }
+    .ab-banner.off { background: #2c2c2c; color: #999; }
+
+    /* ===== Timer card ===== */
+    .timer-card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 40px 24px;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .mode-tabs { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; }
+    .mode-tab {
+      padding: 6px 18px;
+      border-radius: 20px;
+      border: 2px solid transparent;
+      cursor: pointer;
+      font-size: .85rem;
+      background: transparent;
+      color: var(--muted);
+      transition: all .2s;
+    }
+    .mode-tab.active { border-color: var(--red); color: var(--red); font-weight: 600; }
+
+    .timer-ring { position: relative; display: inline-block; margin-bottom: 24px; }
+    .timer-ring svg { transform: rotate(-90deg); }
+    .timer-ring .ring-bg  { fill: none; stroke: #333; stroke-width: 8; }
+    .timer-ring .ring-fg  { fill: none; stroke: var(--red); stroke-width: 8;
+                             stroke-linecap: round; transition: stroke-dashoffset .9s linear; }
+    .timer-display {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 3rem; font-weight: 700; letter-spacing: 2px;
+    }
+
+    .btn-group { display: flex; justify-content: center; gap: 12px; }
+    .btn {
+      padding: 12px 32px; border-radius: 12px; border: none;
+      font-size: 1rem; font-weight: 600; cursor: pointer; transition: opacity .2s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-start  { background: var(--red);   color: #fff; }
+    .btn-reset  { background: var(--card2); color: var(--text); }
+    .btn-skip   { background: var(--blue);  color: #fff; }
+
+    .session-count { margin-top: 20px; font-size: .9rem; color: var(--muted); }
+    .session-count span { color: var(--text); font-weight: 600; }
+
+    /* ===== Notification ===== */
+    #notification {
+      position: fixed; top: 24px; right: 24px; z-index: 999;
+      background: var(--green); color: #fff;
+      padding: 14px 20px; border-radius: 12px;
+      font-size: .95rem; max-width: 320px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.4);
+      opacity: 0; transform: translateY(-10px);
+      transition: all .4s;
+      pointer-events: none;
+    }
+    #notification.show { opacity: 1; transform: translateY(0); }
+
+    /* ===== XP bar ===== */
+    .xp-bar-wrap { background: var(--card); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 24px; }
+    .level-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .level-badge {
+      background: var(--gold); color: #000;
+      border-radius: 20px; padding: 4px 14px;
+      font-weight: 700; font-size: .9rem;
+    }
+    .xp-bar-outer { height: 12px; background: #333; border-radius: 6px; overflow: hidden; }
+    .xp-bar-inner { height: 100%; background: linear-gradient(90deg, var(--gold), #e67e22);
+                    border-radius: 6px; transition: width .6s ease; }
+    .xp-text { margin-top: 6px; font-size: .8rem; color: var(--muted); text-align: right; }
+
+    /* ===== Streak ===== */
+    .streak-card {
+      background: var(--card); border-radius: var(--radius); padding: 20px 24px;
+      margin-bottom: 24px; display: flex; align-items: center; gap: 16px;
+    }
+    .streak-flame { font-size: 2.5rem; }
+    .streak-info h3 { font-size: 1rem; color: var(--muted); }
+    .streak-info .streak-num { font-size: 2rem; font-weight: 700; color: #ff6b35; }
+
+    /* ===== Badges ===== */
+    .badges-card { background: var(--card); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 24px; }
+    .badges-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+    .badge-item {
+      background: var(--card2); border-radius: 12px; padding: 14px 8px;
+      text-align: center; transition: transform .2s;
+    }
+    .badge-item.locked { opacity: .35; }
+    .badge-item:hover { transform: translateY(-2px); }
+    .badge-icon { font-size: 2rem; margin-bottom: 6px; }
+    .badge-name { font-size: .75rem; font-weight: 600; }
+    .badge-desc { font-size: .65rem; color: var(--muted); margin-top: 4px; }
+
+    /* ===== Charts ===== */
+    .charts-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+    @media (max-width: 600px) { .charts-wrap { grid-template-columns: 1fr; } }
+    .chart-card { background: var(--card); border-radius: var(--radius); padding: 20px 24px; }
+    .chart-card canvas { max-height: 220px; }
+
+    /* ===== Hidden when A/B off ===== */
+    .gamification-section { display: none; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🍅 ポモドーロタイマー</h1>
+
+  <!-- A/B banner -->
+  {% if ab_group == 'on' %}
+  <div class="ab-banner on">✨ ゲーミフィケーションモード（A/Bテスト: 有効）</div>
+  {% else %}
+  <div class="ab-banner off">シンプルモード（A/Bテスト: 無効）</div>
+  {% endif %}
+
+  <!-- ===== Timer ===== -->
+  <div class="timer-card">
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="work" data-minutes="25">作業 25分</button>
+      <button class="mode-tab" data-mode="short" data-minutes="5">短休憩 5分</button>
+      <button class="mode-tab" data-mode="long" data-minutes="15">長休憩 15分</button>
+    </div>
+
+    <div class="timer-ring">
+      <svg width="200" height="200" viewBox="0 0 200 200">
+        <circle class="ring-bg" cx="100" cy="100" r="88" />
+        <circle class="ring-fg" id="ringFg" cx="100" cy="100" r="88"
+                stroke-dasharray="552.92" stroke-dashoffset="0" />
+      </svg>
+      <div class="timer-display" id="timerDisplay">25:00</div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-start" id="btnStart">▶ スタート</button>
+      <button class="btn btn-reset" id="btnReset">↺ リセット</button>
+    </div>
+
+    <p class="session-count">
+      今日の完了: <span id="todaySessions">0</span> ポモドーロ　
+      合計: <span id="totalSessions">0</span> ポモドーロ
+    </p>
+  </div>
+
+  <!-- ===== Gamification (shown only when ab_group == 'on') ===== -->
+  <div id="gamificationArea" class="gamification-section">
+
+    <!-- XP Bar -->
+    <div class="xp-bar-wrap">
+      <div class="level-info">
+        <div>
+          <span class="level-badge" id="levelBadge">Lv.1</span>
+          <span style="margin-left:10px; font-size:.85rem;" id="levelName">ビギナー</span>
+        </div>
+        <div class="muted" id="totalXp">総XP: 0</div>
+      </div>
+      <div class="xp-bar-outer">
+        <div class="xp-bar-inner" id="xpBar" style="width:0%"></div>
+      </div>
+      <div class="xp-text" id="xpText">0 / 200 XP</div>
+    </div>
+
+    <!-- Streak -->
+    <div class="streak-card">
+      <div class="streak-flame">🔥</div>
+      <div class="streak-info">
+        <h3>連続日数ストリーク</h3>
+        <div class="streak-num" id="currentStreak">0</div>
+        <div class="muted">日連続　（最高: <span id="maxStreak">0</span>日）</div>
+      </div>
+    </div>
+
+    <!-- Badges -->
+    <div class="badges-card">
+      <h2>🏅 バッジ</h2>
+      <div class="badges-grid" id="badgesGrid">
+        <!-- populated by JS -->
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-wrap">
+      <div class="chart-card">
+        <h2>📊 週間記録（過去7日）</h2>
+        <canvas id="weeklyChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>📈 月間記録（過去4週）</h2>
+        <canvas id="monthlyChart"></canvas>
+      </div>
+    </div>
+
+  </div><!-- /gamificationArea -->
+</div><!-- /container -->
+
+<!-- Notification -->
+<div id="notification"></div>
+
+<script>
+// ─────────────────────────────────────────────
+// Config
+// ─────────────────────────────────────────────
+const AB_GROUP = "{{ ab_group }}";
+const LEVEL_NAMES = ["","ビギナー","見習い","集中者","熟練者","達人","エキスパート","マスター","グランドマスター","レジェンド","神"];
+
+// ─────────────────────────────────────────────
+// Timer state
+// ─────────────────────────────────────────────
+let totalSeconds   = 25 * 60;
+let remainSeconds  = totalSeconds;
+let timerInterval  = null;
+let running        = false;
+let currentMode    = "work";
+
+const CIRCUMFERENCE = 2 * Math.PI * 88; // 552.92
+
+const display  = document.getElementById("timerDisplay");
+const ring     = document.getElementById("ringFg");
+const btnStart = document.getElementById("btnStart");
+const btnReset = document.getElementById("btnReset");
+
+function setMode(mode, minutes) {
+  if (running) stopTimer();
+  currentMode   = mode;
+  totalSeconds  = minutes * 60;
+  remainSeconds = totalSeconds;
+  updateDisplay();
+  document.querySelectorAll(".mode-tab").forEach(t =>
+    t.classList.toggle("active", t.dataset.mode === mode)
+  );
+}
+
+function formatTime(sec) {
+  const m = String(Math.floor(sec / 60)).padStart(2, "0");
+  const s = String(sec % 60).padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function updateDisplay() {
+  display.textContent = formatTime(remainSeconds);
+  const progress = 1 - remainSeconds / totalSeconds;
+  ring.style.strokeDashoffset = CIRCUMFERENCE * (1 - progress);
+  ring.style.stroke = currentMode === "work" ? "#e74c3c" : "#27ae60";
+  document.title = `${formatTime(remainSeconds)} 🍅`;
+}
+
+function startTimer() {
+  running = true;
+  btnStart.textContent = "⏸ 一時停止";
+  timerInterval = setInterval(() => {
+    remainSeconds--;
+    updateDisplay();
+    if (remainSeconds <= 0) {
+      clearInterval(timerInterval);
+      running = false;
+      onTimerComplete();
+    }
+  }, 1000);
+}
+
+function stopTimer() {
+  clearInterval(timerInterval);
+  running = false;
+  btnStart.textContent = "▶ スタート";
+}
+
+function resetTimer() {
+  stopTimer();
+  remainSeconds = totalSeconds;
+  updateDisplay();
+}
+
+async function onTimerComplete() {
+  btnStart.textContent = "▶ スタート";
+  if (currentMode === "work") {
+    // Record session
+    try {
+      const res  = await fetch("/api/session/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration: totalSeconds / 60 }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        updateProfileUI(data.stats, data.badges);
+        showNotification(`🍅 ポモドーロ完了！ +${data.xp_gained} XP`);
+      }
+    } catch(e) { console.error(e); }
+  }
+  // Play sound / browser notification
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(currentMode === "work" ? "🍅 ポモドーロ完了！休憩しましょう" : "⏰ 休憩終了！作業を再開しましょう");
+  }
+}
+
+btnStart.addEventListener("click", () => {
+  if (running) { stopTimer(); } else { startTimer(); }
+});
+btnReset.addEventListener("click", resetTimer);
+
+document.querySelectorAll(".mode-tab").forEach(tab => {
+  tab.addEventListener("click", () => setMode(tab.dataset.mode, parseInt(tab.dataset.minutes)));
+});
+
+// ─────────────────────────────────────────────
+// Notification toast
+// ─────────────────────────────────────────────
+let notifTimeout;
+function showNotification(msg) {
+  const el = document.getElementById("notification");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(notifTimeout);
+  notifTimeout = setTimeout(() => el.classList.remove("show"), 4000);
+}
+
+// ─────────────────────────────────────────────
+// Gamification UI
+// ─────────────────────────────────────────────
+let weeklyChart, monthlyChart;
+
+function initGameUI() {
+  if (AB_GROUP !== "on") return;
+  document.getElementById("gamificationArea").style.display = "block";
+  loadProfile();
+  loadWeeklyChart();
+  loadMonthlyChart();
+}
+
+async function loadProfile() {
+  const res  = await fetch("/api/profile");
+  const data = await res.json();
+  updateProfileUI(data.stats, data.badges);
+}
+
+function updateProfileUI(stats, badges) {
+  // Session counts
+  document.getElementById("totalSessions").textContent = stats.total_sessions;
+
+  if (AB_GROUP !== "on") return;
+
+  // XP / Level
+  document.getElementById("levelBadge").textContent = `Lv.${stats.level}`;
+  document.getElementById("levelName").textContent   = LEVEL_NAMES[stats.level] || "";
+  document.getElementById("totalXp").textContent     = `総XP: ${stats.total_xp}`;
+  const pct = Math.min(100, Math.round(stats.xp_in_level / stats.xp_needed * 100));
+  document.getElementById("xpBar").style.width       = pct + "%";
+  document.getElementById("xpText").textContent      = `${stats.xp_in_level} / ${stats.xp_needed} XP`;
+
+  // Streak
+  document.getElementById("currentStreak").textContent = stats.current_streak;
+  document.getElementById("maxStreak").textContent      = stats.max_streak;
+
+  // Badges
+  renderBadges(badges);
+}
+
+function renderBadges(badges) {
+  const grid = document.getElementById("badgesGrid");
+  grid.innerHTML = "";
+  badges.forEach(b => {
+    const div = document.createElement("div");
+    div.className = "badge-item" + (b.earned ? "" : " locked");
+    div.innerHTML = `
+      <div class="badge-icon">${b.icon}</div>
+      <div class="badge-name">${b.name}</div>
+      <div class="badge-desc">${b.description}</div>
+    `;
+    grid.appendChild(div);
+  });
+}
+
+async function loadWeeklyChart() {
+  const res  = await fetch("/api/stats/weekly");
+  const data = await res.json();
+
+  const ctx = document.getElementById("weeklyChart").getContext("2d");
+  if (weeklyChart) weeklyChart.destroy();
+  weeklyChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: data.labels,
+      datasets: [{
+        label: "ポモドーロ数",
+        data: data.data,
+        backgroundColor: "rgba(231,76,60,.7)",
+        borderColor: "#e74c3c",
+        borderWidth: 2,
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#aaa" }, grid: { color: "#333" } },
+        y: { ticks: { color: "#aaa", stepSize: 1 }, grid: { color: "#333" }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+async function loadMonthlyChart() {
+  const res  = await fetch("/api/stats/monthly");
+  const data = await res.json();
+
+  const ctx = document.getElementById("monthlyChart").getContext("2d");
+  if (monthlyChart) monthlyChart.destroy();
+  monthlyChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: data.labels,
+      datasets: [{
+        label: "週間ポモドーロ数",
+        data: data.data,
+        borderColor: "#f39c12",
+        backgroundColor: "rgba(243,156,18,.15)",
+        borderWidth: 2,
+        pointRadius: 5,
+        tension: 0.3,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#aaa" }, grid: { color: "#333" } },
+        y: { ticks: { color: "#aaa", stepSize: 1 }, grid: { color: "#333" }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+// ─────────────────────────────────────────────
+// Today's count (always shown regardless of A/B)
+// ─────────────────────────────────────────────
+async function loadTodayCount() {
+  try {
+    const res  = await fetch("/api/profile");
+    const data = await res.json();
+    document.getElementById("totalSessions").textContent = data.stats.total_sessions;
+    // Today's count = sessions today; use weekly chart first day
+    const wRes  = await fetch("/api/stats/weekly");
+    const wData = await wRes.json();
+    document.getElementById("todaySessions").textContent = wData.data[wData.data.length - 1] || 0;
+  } catch(e) { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────
+updateDisplay();
+loadTodayCount();
+initGameUI();
+
+// Request notification permission
+if ("Notification" in window && Notification.permission === "default") {
+  Notification.requestPermission();
+}
+</script>
+</body>
+</html>
