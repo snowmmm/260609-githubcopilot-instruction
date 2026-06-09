@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ポモドーロタイマー — 視覚的フィードバック強化版</title>
+  <style>
+    /* ===== リセット & 基本設定 ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-early:  #3b82f6; /* 青  — 残り時間 > 50% */
+      --color-mid:    #eab308; /* 黄  — 残り時間 25-50% */
+      --color-late:   #ef4444; /* 赤  — 残り時間 < 25% */
+      --bg-focus:     #0f172a;
+      --bg-break:     #0f2a1a;
+      --text-primary: #f1f5f9;
+      --text-sub:     #94a3b8;
+      --ring-track:   rgba(255,255,255,0.08);
+      --font: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: var(--font);
+      background: var(--bg-focus);
+      color: var(--text-primary);
+      overflow: hidden;
+      transition: background 1s ease;
+    }
+
+    /* ===== パーティクルキャンバス（最背面） ===== */
+    #particle-canvas {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ===== メインレイアウト ===== */
+    .app {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 2rem;
+      padding: 1.5rem;
+    }
+
+    /* ===== モードバッジ ===== */
+    .mode-badge {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 0.3rem 1rem;
+      border-radius: 99px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: var(--text-sub);
+      transition: color 0.6s, border-color 0.6s;
+    }
+
+    /* ===== 円形プログレスリング ===== */
+    .ring-wrapper {
+      position: relative;
+      width: min(320px, 80vw);
+      height: min(320px, 80vw);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #ring-svg {
+      position: absolute;
+      inset: 0;
+      transform: rotate(-90deg); /* 12時から開始 */
+    }
+
+    .ring-track {
+      fill: none;
+      stroke: var(--ring-track);
+      stroke-width: 10;
+    }
+
+    .ring-progress {
+      fill: none;
+      stroke-width: 10;
+      stroke-linecap: round;
+      /* stroke-dasharray / stroke-dashoffset は JS で制御 */
+      transition: stroke 0.8s ease, stroke-dashoffset 1.05s linear;
+      filter: drop-shadow(0 0 8px currentColor);
+    }
+
+    /* ===== 波紋エフェクト ===== */
+    .ripple-layer {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .ripple {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.12);
+      animation: ripple-out 3.5s ease-out infinite;
+      opacity: 0;
+    }
+    .ripple:nth-child(2) { animation-delay: 1.15s; }
+    .ripple:nth-child(3) { animation-delay: 2.3s; }
+
+    @keyframes ripple-out {
+      0%   { transform: scale(0.85); opacity: 0.6; }
+      100% { transform: scale(1.5);  opacity: 0; }
+    }
+
+    /* ===== タイマー表示 ===== */
+    .timer-display {
+      text-align: center;
+    }
+
+    .timer-time {
+      font-size: clamp(3rem, 12vw, 5rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      transition: color 0.8s ease;
+    }
+
+    .timer-label {
+      font-size: 0.8rem;
+      color: var(--text-sub);
+      margin-top: 0.4rem;
+      letter-spacing: 0.1em;
+    }
+
+    /* ===== コントロールボタン ===== */
+    .controls {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .btn {
+      cursor: pointer;
+      border: none;
+      border-radius: 99px;
+      font-family: var(--font);
+      font-weight: 600;
+      transition: transform 0.15s, opacity 0.15s, background 0.3s, box-shadow 0.3s;
+    }
+    .btn:active { transform: scale(0.95); }
+
+    .btn-primary {
+      background: var(--color-early);
+      color: #fff;
+      font-size: 1.1rem;
+      padding: 0.7rem 2.4rem;
+      box-shadow: 0 0 20px rgba(59,130,246,0.4);
+    }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.08);
+      color: var(--text-sub);
+      font-size: 0.9rem;
+      padding: 0.6rem 1.4rem;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.14); }
+
+    /* ===== セッション統計 ===== */
+    .stats {
+      display: flex;
+      gap: 2rem;
+      text-align: center;
+    }
+
+    .stat-item { display: flex; flex-direction: column; gap: 0.2rem; }
+    .stat-value { font-size: 1.5rem; font-weight: 700; }
+    .stat-key   { font-size: 0.7rem; color: var(--text-sub); letter-spacing: 0.1em; text-transform: uppercase; }
+
+    /* ===== セッションログパネル ===== */
+    .log-panel {
+      width: min(380px, 90vw);
+      max-height: 150px;
+      overflow-y: auto;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 0.8rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-sub);
+      scrollbar-width: thin;
+    }
+
+    .log-panel:empty::before {
+      content: 'セッション記録はここに表示されます';
+      opacity: 0.5;
+    }
+
+    .log-entry {
+      padding: 0.25rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      display: flex;
+      justify-content: space-between;
+    }
+    .log-entry:last-child { border-bottom: none; }
+
+    /* ===== 完了アニメーション ===== */
+    @keyframes complete-pulse {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.04); }
+    }
+
+    .ring-wrapper.complete {
+      animation: complete-pulse 0.6s ease 3;
+    }
+
+    /* ===== 設定パネル ===== */
+    .settings {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.78rem;
+      color: var(--text-sub);
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .settings label { display: flex; flex-direction: column; gap: 0.25rem; align-items: center; }
+    .settings input[type=number] {
+      width: 4.5rem;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 6px;
+      color: var(--text-primary);
+      text-align: center;
+      padding: 0.3rem;
+      font-size: 0.9rem;
+      font-family: var(--font);
+    }
+    .settings input[type=number]:focus { outline: none; border-color: var(--color-early); }
+  </style>
+</head>
+<body>
+
+<canvas id="particle-canvas"></canvas>
+
+<div class="app">
+
+  <!-- モードバッジ -->
+  <div class="mode-badge" id="mode-badge">集中モード</div>
+
+  <!-- 円形プログレスリング + 波紋 -->
+  <div class="ring-wrapper" id="ring-wrapper">
+    <div class="ripple-layer" id="ripple-layer">
+      <div class="ripple"></div>
+      <div class="ripple"></div>
+      <div class="ripple"></div>
+    </div>
+
+    <svg id="ring-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+      <circle class="ring-track" cx="60" cy="60" r="54" />
+      <circle class="ring-progress" id="ring-progress" cx="60" cy="60" r="54" />
+    </svg>
+
+    <div class="timer-display">
+      <div class="timer-time" id="timer-time">25:00</div>
+      <div class="timer-label" id="timer-label">FOCUS</div>
+    </div>
+  </div>
+
+  <!-- コントロール -->
+  <div class="controls">
+    <button class="btn btn-secondary" id="btn-reset" onclick="resetTimer()">リセット</button>
+    <button class="btn btn-primary"   id="btn-start" onclick="toggleTimer()">スタート</button>
+    <button class="btn btn-secondary" id="btn-skip"  onclick="skipPhase()">スキップ</button>
+  </div>
+
+  <!-- セッション統計 -->
+  <div class="stats">
+    <div class="stat-item">
+      <span class="stat-value" id="stat-completed">0</span>
+      <span class="stat-key">完了</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-value" id="stat-focus-total">0</span>
+      <span class="stat-key">集中(分)</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-value" id="stat-streak">0</span>
+      <span class="stat-key">連続</span>
+    </div>
+  </div>
+
+  <!-- 設定 -->
+  <div class="settings">
+    <label>集中（分）<input type="number" id="cfg-focus" value="25" min="1" max="90" onchange="applySettings()" /></label>
+    <label>短休憩（分）<input type="number" id="cfg-short" value="5"  min="1" max="30" onchange="applySettings()" /></label>
+    <label>長休憩（分）<input type="number" id="cfg-long"  value="15" min="1" max="60" onchange="applySettings()" /></label>
+    <label>連続後に長休憩<input type="number" id="cfg-sets"  value="4"  min="1" max="10" onchange="applySettings()" /></label>
+  </div>
+
+  <!-- セッションログ -->
+  <div class="log-panel" id="log-panel"></div>
+
+</div>
+
+<script>
+/* ============================================================
+   ポモドーロタイマー — 視覚的フィードバック強化版
+   実装内容:
+     1. 円形プログレスバー（滑らかなアニメーション）
+     2. 色グラデーション（青 → 黄 → 赤）
+     3. パーティクルエフェクト + 波紋アニメーション
+     4. セッションログ（集中力測定用）
+   ============================================================ */
+
+// ──────────────────────────────────────────────────────────
+// 設定
+// ──────────────────────────────────────────────────────────
+let CFG = { focus: 25, shortBreak: 5, longBreak: 15, setsBeforeLong: 4 };
+
+function applySettings() {
+  CFG.focus          = Math.max(1, parseInt(document.getElementById('cfg-focus').value)  || 25);
+  CFG.shortBreak     = Math.max(1, parseInt(document.getElementById('cfg-short').value)  || 5);
+  CFG.longBreak      = Math.max(1, parseInt(document.getElementById('cfg-long').value)   || 15);
+  CFG.setsBeforeLong = Math.max(1, parseInt(document.getElementById('cfg-sets').value)   || 4);
+  if (!running) resetTimer();
+}
+
+// ──────────────────────────────────────────────────────────
+// 状態
+// ──────────────────────────────────────────────────────────
+const PHASES = { FOCUS: 'focus', SHORT: 'short', LONG: 'long' };
+
+let phase        = PHASES.FOCUS;
+let totalSecs    = CFG.focus * 60;
+let remainSecs   = totalSecs;
+let running      = false;
+let tickInterval = null;
+let completedSessions = 0;
+let totalFocusMins    = 0;
+let streak            = 0;
+let sessionStartTime  = null;
+
+// ──────────────────────────────────────────────────────────
+// DOM キャッシュ
+// ──────────────────────────────────────────────────────────
+const elTime    = document.getElementById('timer-time');
+const elLabel   = document.getElementById('timer-label');
+const elBadge   = document.getElementById('mode-badge');
+const elBtnSt   = document.getElementById('btn-start');
+const elRing    = document.getElementById('ring-progress');
+const elWrapper = document.getElementById('ring-wrapper');
+const elRipple  = document.getElementById('ripple-layer');
+const elLog     = document.getElementById('log-panel');
+const elStatC   = document.getElementById('stat-completed');
+const elStatF   = document.getElementById('stat-focus-total');
+const elStatS   = document.getElementById('stat-streak');
+
+// 円周長
+const CIRCUMFERENCE = 2 * Math.PI * 54; // r=54
+elRing.style.strokeDasharray = CIRCUMFERENCE;
+
+// ──────────────────────────────────────────────────────────
+// 色グラデーション計算（青→黄→赤）
+// ──────────────────────────────────────────────────────────
+function lerpColor(a, b, t) {
+  // a, b: [r,g,b]  t: 0-1
+  return a.map((v, i) => Math.round(v + (b[i] - v) * t));
+}
+
+function progressColor(ratio) {
+  // ratio: 残り時間の割合 (1.0=最初, 0.0=終了)
+  // 1.0→0.5 : 青→黄,  0.5→0.0 : 黄→赤
+  const BLUE   = [59,  130, 246];
+  const YELLOW = [234, 179, 8  ];
+  const RED    = [239, 68,  68 ];
+
+  let rgb;
+  if (ratio >= 0.5) {
+    rgb = lerpColor(BLUE,   YELLOW, (1 - ratio) * 2);
+  } else {
+    rgb = lerpColor(YELLOW, RED,    (0.5 - ratio) * 2);
+  }
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+}
+
+// ──────────────────────────────────────────────────────────
+// UI 更新
+// ──────────────────────────────────────────────────────────
+function updateUI() {
+  // 時刻表示
+  const m = Math.floor(remainSecs / 60);
+  const s = remainSecs % 60;
+  elTime.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+
+  // 進捗率（残り割合）
+  const ratio  = remainSecs / totalSecs;
+  const offset = CIRCUMFERENCE * (1 - ratio);
+  elRing.style.strokeDashoffset = offset;
+
+  // 色グラデーション（集中モードのみ）
+  let color;
+  if (phase === PHASES.FOCUS) {
+    color = progressColor(ratio);
+  } else {
+    color = '#22c55e'; // 休憩は緑
+  }
+  elRing.style.stroke = color;
+  elTime.style.color  = color;
+
+  // ボタンの色同期
+  document.getElementById('btn-start').style.background  = running ? 'rgba(255,255,255,0.12)' : color;
+  document.getElementById('btn-start').style.boxShadow   = running ? 'none' : `0 0 24px ${color}88`;
+}
+
+function updateMode() {
+  const labels = {
+    [PHASES.FOCUS]: { badge: '集中モード', label: 'FOCUS',       bg: 'var(--bg-focus)' },
+    [PHASES.SHORT]: { badge: '短い休憩',   label: 'SHORT BREAK', bg: 'var(--bg-break)' },
+    [PHASES.LONG]:  { badge: '長い休憩',   label: 'LONG BREAK',  bg: 'var(--bg-break)' },
+  };
+  const info = labels[phase];
+  elBadge.textContent = info.badge;
+  elLabel.textContent = info.label;
+  document.body.style.background = info.bg;
+
+  // 波紋・パーティクルは集中モードのみ
+  const isFocus = phase === PHASES.FOCUS;
+  elRipple.style.display     = isFocus && running ? 'block' : 'none';
+  particlesActive            = isFocus && running;
+}
+
+function updateStats() {
+  elStatC.textContent = completedSessions;
+  elStatF.textContent = totalFocusMins;
+  elStatS.textContent = streak;
+}
+
+// ──────────────────────────────────────────────────────────
+// タイマー制御
+// ──────────────────────────────────────────────────────────
+function toggleTimer() {
+  running ? pauseTimer() : startTimer();
+}
+
+function startTimer() {
+  if (running) return;
+  running = true;
+  sessionStartTime = sessionStartTime || new Date();
+  elBtnSt.textContent = '一時停止';
+  updateMode();
+  updateUI();
+  tickInterval = setInterval(tick, 1000);
+}
+
+function pauseTimer() {
+  running = false;
+  clearInterval(tickInterval);
+  elBtnSt.textContent = 'スタート';
+  updateMode();
+}
+
+function resetTimer() {
+  pauseTimer();
+  phase        = PHASES.FOCUS;
+  totalSecs    = CFG.focus * 60;
+  remainSecs   = totalSecs;
+  sessionStartTime = null;
+  elBtnSt.textContent = 'スタート';
+  updateMode();
+  updateUI();
+}
+
+function skipPhase() {
+  clearInterval(tickInterval);
+  running = false;
+  sessionStartTime = null;
+  advancePhase(false);
+}
+
+function tick() {
+  if (remainSecs <= 0) {
+    onPhaseComplete();
+    return;
+  }
+  remainSecs--;
+  updateUI();
+}
+
+function onPhaseComplete() {
+  clearInterval(tickInterval);
+  running = false;
+  pulseComplete();
+
+  if (phase === PHASES.FOCUS) {
+    completedSessions++;
+    streak++;
+    const elapsed = Math.round((new Date() - sessionStartTime) / 60000);
+    totalFocusMins += elapsed;
+    addLog(PHASES.FOCUS, elapsed);
+    updateStats();
+  }
+
+  sessionStartTime = null;
+  advancePhase(true);
+  notify();
+}
+
+function advancePhase(autoStart) {
+  if (phase === PHASES.FOCUS) {
+    phase     = (completedSessions % CFG.setsBeforeLong === 0) ? PHASES.LONG : PHASES.SHORT;
+    totalSecs = (phase === PHASES.LONG ? CFG.longBreak : CFG.shortBreak) * 60;
+  } else {
+    phase     = PHASES.FOCUS;
+    totalSecs = CFG.focus * 60;
+  }
+  remainSecs = totalSecs;
+  elBtnSt.textContent = 'スタート';
+  updateMode();
+  updateUI();
+  if (autoStart) startTimer();
+}
+
+// ──────────────────────────────────────────────────────────
+// 完了アニメーション
+// ──────────────────────────────────────────────────────────
+function pulseComplete() {
+  elWrapper.classList.remove('complete');
+  void elWrapper.offsetWidth; // リフロー強制
+  elWrapper.classList.add('complete');
+  setTimeout(() => elWrapper.classList.remove('complete'), 2000);
+}
+
+// ──────────────────────────────────────────────────────────
+// 通知
+// ──────────────────────────────────────────────────────────
+function notify() {
+  const messages = {
+    [PHASES.FOCUS]: '集中セッション完了！休憩を取りましょう。',
+    [PHASES.SHORT]: '短い休憩終了。次の集中へ！',
+    [PHASES.LONG]:  '長い休憩終了。リフレッシュできましたか？',
+  };
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('ポモドーロタイマー', { body: messages[phase] || '' });
+  }
+}
+
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
+
+// ──────────────────────────────────────────────────────────
+// セッションログ（集中力測定用）
+// ──────────────────────────────────────────────────────────
+function addLog(type, durationMin) {
+  const now = new Date();
+  const ts  = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  const label  = type === PHASES.FOCUS ? '集中' : '休憩';
+  entry.innerHTML = `<span>${ts} — ${label}セッション完了</span><span>${durationMin} 分</span>`;
+  elLog.prepend(entry);
+
+  // localStorage にも保存（セッション間で記録を保持）
+  try {
+    const key  = 'pomodoro_log';
+    const logs = JSON.parse(localStorage.getItem(key) || '[]');
+    logs.unshift({ ts, type, durationMin, date: now.toISOString() });
+    if (logs.length > 200) logs.length = 200;
+    localStorage.setItem(key, JSON.stringify(logs));
+  } catch (_) { /* localStorage が利用不可の場合は無視 */ }
+}
+
+// 起動時に保存済みログを復元
+(function restoreLog() {
+  try {
+    const logs = JSON.parse(localStorage.getItem('pomodoro_log') || '[]');
+    logs.slice(0, 10).forEach(l => {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      const label = l.type === PHASES.FOCUS ? '集中' : '休憩';
+      entry.innerHTML = `<span>${l.ts} — ${label}セッション（過去）</span><span>${l.durationMin} 分</span>`;
+      elLog.appendChild(entry);
+    });
+  } catch (_) { /* 無視 */ }
+})();
+
+// ──────────────────────────────────────────────────────────
+// パーティクルエフェクト（Canvas）
+// ──────────────────────────────────────────────────────────
+const canvas  = document.getElementById('particle-canvas');
+const ctx     = canvas.getContext('2d');
+let particles = [];
+let particlesActive = false;
+
+function resizeCanvas() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+class Particle {
+  constructor() { this.reset(); }
+
+  reset() {
+    this.x  = Math.random() * canvas.width;
+    this.y  = canvas.height + 20;
+    this.vx = (Math.random() - 0.5) * 0.6;
+    this.vy = -(0.3 + Math.random() * 0.8);
+    this.r  = 1.5 + Math.random() * 2.5;
+    this.life   = 0;
+    this.maxLife = 200 + Math.random() * 200;
+    this.hue    = 200 + Math.random() * 40; // 青系
+  }
+
+  update() {
+    this.x    += this.vx;
+    this.y    += this.vy;
+    this.life++;
+    // 軽い揺らぎ
+    this.vx   += (Math.random() - 0.5) * 0.04;
+  }
+
+  draw() {
+    const alpha = Math.sin((this.life / this.maxLife) * Math.PI) * 0.5;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${this.hue},80%,75%,${alpha})`;
+    ctx.fill();
+  }
+
+  isDead() { return this.life >= this.maxLife || this.y < -20; }
+}
+
+// 初期パーティクルプール
+for (let i = 0; i < 60; i++) {
+  const p = new Particle();
+  p.life = Math.random() * p.maxLife; // ランダムな初期フェーズ
+  p.y    = Math.random() * canvas.height;
+  particles.push(p);
+}
+
+function animateParticles() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (particlesActive) {
+    // 集中モード中はパーティクルを追加
+    if (Math.random() < 0.4) {
+      particles.push(new Particle());
+    }
+  }
+
+  particles = particles.filter(p => !p.isDead());
+  if (particles.length > 120) particles.splice(0, particles.length - 120);
+
+  if (particlesActive) {
+    particles.forEach(p => { p.update(); p.draw(); });
+  }
+
+  requestAnimationFrame(animateParticles);
+}
+animateParticles();
+
+// ──────────────────────────────────────────────────────────
+// 初期表示
+// ──────────────────────────────────────────────────────────
+updateMode();
+updateUI();
+updateStats();
+</script>
+</body>
+</html>
