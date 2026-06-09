@@ -72,12 +72,37 @@
     .timer-ring svg { transform: rotate(-90deg); }
     .timer-ring .ring-bg  { fill: none; stroke: #333; stroke-width: 8; }
     .timer-ring .ring-fg  { fill: none; stroke: var(--red); stroke-width: 8;
-                             stroke-linecap: round; transition: stroke-dashoffset .9s linear; }
+                             stroke-linecap: round;
+                             transition: stroke-dashoffset .9s linear, stroke .8s ease;
+                             filter: drop-shadow(0 0 6px currentColor); }
     .timer-display {
       position: absolute; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
       font-size: 3rem; font-weight: 700; letter-spacing: 2px;
+      transition: color .8s ease;
     }
+
+    /* ===== Ripple animation (focus mode only) ===== */
+    .ripple-layer {
+      position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+    }
+    .ripple {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.1);
+      animation: ripple-out 3.5s ease-out infinite; opacity: 0;
+    }
+    .ripple:nth-child(2) { animation-delay: 1.15s; }
+    .ripple:nth-child(3) { animation-delay: 2.3s; }
+    @keyframes ripple-out {
+      0%   { transform: scale(0.85); opacity: 0.5; }
+      100% { transform: scale(1.6);  opacity: 0; }
+    }
+
+    /* ===== Particle canvas (behind everything) ===== */
+    #particle-canvas {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    }
+    .container { position: relative; z-index: 1; }
 
     .btn-group { display: flex; justify-content: center; gap: 12px; }
     .btn {
@@ -151,6 +176,7 @@
   </style>
 </head>
 <body>
+<canvas id="particle-canvas"></canvas>
 <div class="container">
   <h1>🍅 ポモドーロタイマー</h1>
 
@@ -170,6 +196,11 @@
     </div>
 
     <div class="timer-ring">
+      <div class="ripple-layer" id="rippleLayer">
+        <div class="ripple"></div>
+        <div class="ripple"></div>
+        <div class="ripple"></div>
+      </div>
       <svg width="200" height="200" viewBox="0 0 200 200">
         <circle class="ring-bg" cx="100" cy="100" r="88" />
         <circle class="ring-fg" id="ringFg" cx="100" cy="100" r="88"
@@ -258,6 +289,7 @@ let remainSeconds  = totalSeconds;
 let timerInterval  = null;
 let running        = false;
 let currentMode    = "work";
+let particlesActive = false;
 
 const CIRCUMFERENCE = 2 * Math.PI * 88; // 552.92
 
@@ -285,21 +317,55 @@ function formatTime(sec) {
 
 function updateDisplay() {
   display.textContent = formatTime(remainSeconds);
-  const progress = 1 - remainSeconds / totalSeconds;
+  const ratio    = remainSeconds / totalSeconds;
+  const progress = 1 - ratio;
   ring.style.strokeDashoffset = CIRCUMFERENCE * (1 - progress);
-  ring.style.stroke = currentMode === "work" ? "#e74c3c" : "#27ae60";
+
+  // Color gradient: work mode → blue→yellow→red; break → green
+  const color = currentMode === "work" ? progressColor(ratio) : "#27ae60";
+  ring.style.stroke   = color;
+  display.style.color = color;
+
   document.title = `${formatTime(remainSeconds)} 🍅`;
+
+  // Ripple + particles: work mode while running only
+  const isFocusRunning = currentMode === "work" && running;
+  document.getElementById("rippleLayer").style.display = isFocusRunning ? "block" : "none";
+  particlesActive = isFocusRunning;
+}
+
+// ─────────────────────────────────────────────
+// Color gradient helpers (blue → yellow → red)
+// ─────────────────────────────────────────────
+function lerpColor(a, b, t) {
+  return a.map((v, i) => Math.round(v + (b[i] - v) * t));
+}
+
+function progressColor(ratio) {
+  // ratio: 1.0 = start, 0.0 = end
+  const BLUE   = [41,  128, 185];
+  const YELLOW = [243, 156, 18 ];
+  const RED    = [231, 76,  60 ];
+  let rgb;
+  if (ratio >= 0.5) {
+    rgb = lerpColor(BLUE,   YELLOW, (1 - ratio) * 2);
+  } else {
+    rgb = lerpColor(YELLOW, RED,    (0.5 - ratio) * 2);
+  }
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 }
 
 function startTimer() {
   running = true;
   btnStart.textContent = "⏸ 一時停止";
+  updateDisplay(); // apply ripple/particles immediately
   timerInterval = setInterval(() => {
     remainSeconds--;
     updateDisplay();
     if (remainSeconds <= 0) {
       clearInterval(timerInterval);
       running = false;
+      particlesActive = false;
       onTimerComplete();
     }
   }, 1000);
@@ -308,7 +374,9 @@ function startTimer() {
 function stopTimer() {
   clearInterval(timerInterval);
   running = false;
+  particlesActive = false;
   btnStart.textContent = "▶ スタート";
+  updateDisplay();
 }
 
 function resetTimer() {
@@ -493,6 +561,69 @@ async function loadTodayCount() {
     document.getElementById("todaySessions").textContent = wData.data[wData.data.length - 1] || 0;
   } catch(e) { /* ignore */ }
 }
+
+// ─────────────────────────────────────────────
+// Particle engine (Canvas)
+// ─────────────────────────────────────────────
+const pCanvas = document.getElementById("particle-canvas");
+const pCtx    = pCanvas.getContext("2d");
+let particles = [];
+
+function resizeParticleCanvas() {
+  pCanvas.width  = window.innerWidth;
+  pCanvas.height = window.innerHeight;
+}
+resizeParticleCanvas();
+window.addEventListener("resize", resizeParticleCanvas);
+
+class Particle {
+  constructor() { this.reset(); }
+  reset() {
+    this.x       = Math.random() * pCanvas.width;
+    this.y       = pCanvas.height + 10;
+    this.vx      = (Math.random() - 0.5) * 0.5;
+    this.vy      = -(0.3 + Math.random() * 0.7);
+    this.r       = 1.5 + Math.random() * 2;
+    this.life    = 0;
+    this.maxLife = 220 + Math.random() * 200;
+    this.hue     = 200 + Math.random() * 40;
+  }
+  update() {
+    this.x   += this.vx + (Math.random() - 0.5) * 0.04;
+    this.y   += this.vy;
+    this.life++;
+  }
+  draw() {
+    const alpha = Math.sin((this.life / this.maxLife) * Math.PI) * 0.45;
+    pCtx.beginPath();
+    pCtx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    pCtx.fillStyle = `hsla(${this.hue},80%,75%,${alpha})`;
+    pCtx.fill();
+  }
+  isDead() { return this.life >= this.maxLife || this.y < -10; }
+}
+
+// Seed initial pool
+for (let i = 0; i < 50; i++) {
+  const p = new Particle();
+  p.life = Math.random() * p.maxLife;
+  p.y    = Math.random() * pCanvas.height;
+  particles.push(p);
+}
+
+function animateParticles() {
+  pCtx.clearRect(0, 0, pCanvas.width, pCanvas.height);
+  if (particlesActive) {
+    if (Math.random() < 0.35) particles.push(new Particle());
+  }
+  particles = particles.filter(p => !p.isDead());
+  if (particles.length > 100) particles.splice(0, particles.length - 100);
+  if (particlesActive) {
+    particles.forEach(p => { p.update(); p.draw(); });
+  }
+  requestAnimationFrame(animateParticles);
+}
+animateParticles();
 
 // ─────────────────────────────────────────────
 // Init
