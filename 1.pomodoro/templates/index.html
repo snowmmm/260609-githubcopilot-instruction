@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pomodoro Timer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- Header -->
+    <header class="app-header">
+      <h1 class="app-title">🍅 Pomodoro</h1>
+      <div class="header-actions">
+        <button class="icon-btn" id="btn-settings" aria-label="設定を開く" title="設定 (S)">⚙️</button>
+      </div>
+    </header>
+
+    <!-- Session badge -->
+    <span class="session-badge" id="session-badge">🍅 作業中</span>
+
+    <!-- Timer Card -->
+    <div class="timer-card">
+      <!-- Circular progress ring -->
+      <div class="progress-ring-wrapper" role="timer" aria-live="polite">
+        <svg class="progress-ring" width="200" height="200" viewBox="0 0 200 200"
+             aria-hidden="true">
+          <circle class="progress-ring__background" cx="100" cy="100" r="88" />
+          <circle class="progress-ring__circle" id="progress-circle"
+                  cx="100" cy="100" r="88"
+                  stroke-dasharray="552.92"
+                  stroke-dashoffset="0" />
+        </svg>
+        <div class="timer-display">
+          <div class="timer-time" id="timer-time">25:00</div>
+          <div class="timer-label" id="timer-label">作業 25分</div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="timer-controls">
+        <button class="btn btn-primary" id="btn-start-pause" title="スペースキーでも操作できます">
+          ▶ スタート
+        </button>
+        <button class="btn btn-secondary" id="btn-reset" title="リセット (R)">
+          🔄 リセット
+        </button>
+      </div>
+
+      <!-- Session info -->
+      <div class="session-info">
+        <div class="session-stat">今日: <span id="stat-sessions">0</span> セッション</div>
+        <div class="session-stat">合計: <span id="stat-minutes">0</span> 分</div>
+        <div class="session-stat">連続: <span id="stat-streak">0</span> 日</div>
+      </div>
+    </div>
+
+    <!-- Stats Card -->
+    <div class="stats-card">
+      <div class="stats-title">📊 統計</div>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="stat-value" id="stat-sessions-big">0</div>
+          <div class="stat-label">セッション数</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-minutes-big">0</div>
+          <div class="stat-label">集中時間（分）</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-streak-big">0</div>
+          <div class="stat-label">連続日数</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /app-container -->
+
+
+  <!-- Settings Modal (bottom sheet) -->
+  <div class="settings-overlay" id="settings-overlay" role="dialog"
+       aria-modal="true" aria-label="設定">
+    <div class="settings-panel">
+
+      <div class="settings-header">
+        <h2 class="settings-title">⚙️ 設定</h2>
+        <button class="settings-close" id="settings-close" aria-label="設定を閉じる">✕</button>
+      </div>
+
+      <!-- Work Duration -->
+      <div class="settings-section">
+        <div class="settings-section-title">🍅 作業時間</div>
+        <div class="chip-group" role="radiogroup" aria-label="作業時間を選択">
+          {% for d in valid_work_durations %}
+          <button class="chip" role="radio"
+                  data-group="work" data-value="{{ d }}"
+                  aria-checked="{{ 'true' if d == default_settings.work_duration else 'false' }}">
+            {{ d }}分
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Break Duration -->
+      <div class="settings-section">
+        <div class="settings-section-title">☕ 休憩時間</div>
+        <div class="chip-group" role="radiogroup" aria-label="休憩時間を選択">
+          {% for d in valid_break_durations %}
+          <button class="chip break-chip" role="radio"
+                  data-group="break" data-value="{{ d }}"
+                  aria-checked="{{ 'true' if d == default_settings.break_duration else 'false' }}">
+            {{ d }}分
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Theme -->
+      <div class="settings-section">
+        <div class="settings-section-title">🎨 テーマ</div>
+        <div class="chip-group" role="radiogroup" aria-label="テーマを選択">
+          {% for theme in valid_themes %}
+          <button class="chip theme-chip" role="radio"
+                  data-group="theme" data-value="{{ theme }}"
+                  aria-checked="{{ 'true' if theme == default_settings.theme else 'false' }}">
+            {% if theme == 'light' %}☀️ ライト
+            {% elif theme == 'dark' %}🌙 ダーク
+            {% elif theme == 'focus' %}🎯 フォーカス
+            {% endif %}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Sound Settings -->
+      <div class="settings-section">
+        <div class="settings-section-title">🔔 サウンド</div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">▶ 開始音</span>
+          <label class="toggle" aria-label="開始音のON/OFF">
+            <input type="checkbox" id="sound-start"
+                   {% if default_settings.sound_start %}checked{% endif %} />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">🔔 終了音</span>
+          <label class="toggle" aria-label="終了音のON/OFF">
+            <input type="checkbox" id="sound-end"
+                   {% if default_settings.sound_end %}checked{% endif %} />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">⏱ Tick音（毎秒）</span>
+          <label class="toggle" aria-label="Tick音のON/OFF">
+            <input type="checkbox" id="sound-tick"
+                   {% if default_settings.sound_tick %}checked{% endif %} />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-save" id="btn-save-settings">
+        ✅ 保存する
+      </button>
+
+    </div>
+  </div><!-- /settings-overlay -->
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
